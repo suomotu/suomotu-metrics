@@ -22,7 +22,7 @@ Pre-v0. This repo is being built *by* an agentic development organization measur
 
 ## Why this exists
 
-"The agentic dev team is improving" should be a measurable claim, not a vibe. The AI-native SDLC defines per-stage leading and lagging metrics; almost nobody collects them. This tool does.
+"The agentic dev team is improving" should be a measurable claim, not a vibe. The AI-native SDLC defines per-stage leading and lagging metrics; this tool collects them.
 
 ## License
 
