@@ -1,6 +1,6 @@
 # Suomotu Metrics
 
-*Part of [Suomotu](https://suomotu.dev) — from the Latin* suo motu, *"of its own motion": an organization that runs itself, built in the open.*
+*Part of [Suomotu](https://suomotu.dev) — from the Latin* suo motu, *"of its own motion": an organization that runs itself.*
 
 **Prove your AI dev team works.**
 
