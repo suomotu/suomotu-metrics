@@ -96,15 +96,18 @@ class Client:
             url += "?" + urllib.parse.urlencode(params)
         return self.get_url(url)
 
-    def paginate(self, path, params=None):
-        """Yield items across pages, following Link rel="next" verbatim."""
+    def paginate(self, path, params=None, items_key=None):
+        """Yield items across pages, following Link rel="next" verbatim.
+
+        Endpoints that wrap their list in an envelope (e.g. actions/runs)
+        name the list field via items_key.
+        """
         params = dict(params or {})
         params.setdefault("per_page", 100)
         url = API_ROOT + path + "?" + urllib.parse.urlencode(params)
         while url:
             payload, headers = self.get_url(url)
-            items = payload["workflow_runs"] if isinstance(payload, dict) else payload
-            yield from items
+            yield from (payload[items_key] if items_key else payload)
             url = parse_link_header(headers.get("link")).get("next")
 
     def first_and_last_of(self, path, params=None):

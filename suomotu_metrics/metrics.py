@@ -4,15 +4,17 @@ Definitions are implemented here exactly as the spec states them; the report
 layer prints them next to the numbers.
 """
 
+import statistics
 from datetime import datetime, timedelta, timezone
 
 
 def parse_ts(value):
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return datetime.fromisoformat(value)
 
 
 def iso_week(ts):
-    return ts.strftime("%G-W%V")
+    calendar = ts.isocalendar()
+    return f"{calendar.year}-W{calendar.week:02d}"
 
 
 def hours_between(start, end):
@@ -20,28 +22,25 @@ def hours_between(start, end):
 
 
 def median(values):
-    values = sorted(values)
-    if not values:
-        return None
-    middle = len(values) // 2
-    if len(values) % 2:
-        return values[middle]
-    return (values[middle - 1] + values[middle]) / 2.0
+    return statistics.median(values) if values else None
+
+
+def _window_monday(now):
+    day = now.date() - timedelta(days=now.weekday())
+    return day
 
 
 def week_keys(now, weeks):
     """The trailing `weeks` ISO week keys, oldest first, ending at now's week."""
-    monday = now.date() - timedelta(days=now.weekday())
-    keys = []
-    for offset in range(weeks - 1, -1, -1):
-        day = monday - timedelta(weeks=offset)
-        keys.append(datetime(day.year, day.month, day.day).strftime("%G-W%V"))
-    return keys
+    monday = _window_monday(now)
+    return [
+        iso_week(monday - timedelta(weeks=offset))
+        for offset in range(weeks - 1, -1, -1)
+    ]
 
 
 def window_start(now, weeks):
-    monday = now.date() - timedelta(days=now.weekday())
-    start = monday - timedelta(weeks=weeks - 1)
+    start = _window_monday(now) - timedelta(weeks=weeks - 1)
     return datetime(start.year, start.month, start.day, tzinfo=timezone.utc)
 
 
@@ -70,21 +69,19 @@ def _load_facts(con, repo_id):
             (repo_id,),
         )
     }
-    return prs, reviews, commits, failed_shas
+    first_review = {
+        number: min(r["submitted_at"] for r in rows)
+        for number, rows in reviews.items()
+    }
+    return prs, reviews, commits, failed_shas, first_review
 
 
-def first_review_at(pr_reviews):
-    times = [r["submitted_at"] for r in pr_reviews]
-    return min(times) if times else None
-
-
-def is_first_pass(pr, pr_reviews, pr_commit_times):
+def is_first_pass(pr_reviews, pr_commit_times, first_review_at):
     if any(r["state"] == "CHANGES_REQUESTED" for r in pr_reviews):
         return False
-    first = first_review_at(pr_reviews)
-    if first is None:
+    if first_review_at is None:
         return True
-    return not any(t > first for t in pr_commit_times)
+    return not any(t > first_review_at for t in pr_commit_times)
 
 
 def is_change_failure(pr, failed_shas):
@@ -96,7 +93,7 @@ def is_change_failure(pr, failed_shas):
 
 def compute(con, repo_id, weeks, now):
     """Weekly values and a window summary for the five tier-one metrics."""
-    prs, reviews, commits, failed_shas = _load_facts(con, repo_id)
+    prs, reviews, commits, failed_shas, first_review = _load_facts(con, repo_id)
     keys = week_keys(now, weeks)
     start = window_start(now, weeks)
 
@@ -109,7 +106,7 @@ def compute(con, repo_id, weeks, now):
         pr
         for pr in prs
         if not pr["draft"]
-        and first_review_at(reviews.get(pr["number"], [])) is not None
+        and pr["number"] in first_review
         and parse_ts(pr["created_at"]) >= start
     ]
 
@@ -126,15 +123,22 @@ def compute(con, repo_id, weeks, now):
 
     def stats(merged_prs, reviewed_prs):
         first_pass = [
-            is_first_pass(pr, reviews.get(pr["number"], []), commits.get(pr["number"], []))
+            is_first_pass(
+                reviews.get(pr["number"], []),
+                commits.get(pr["number"], []),
+                first_review.get(pr["number"]),
+            )
             for pr in merged_prs
         ]
         failures = [is_change_failure(pr, failed_shas) for pr in merged_prs]
-        review_spans = []
-        for pr in merged_prs:
-            first = first_review_at(reviews.get(pr["number"], []))
-            if first:
-                review_spans.append(hours_between(first, pr["merged_at"]))
+        # A review submitted after the merge (a post-merge approval) is not a
+        # review phase; negative spans stay out of the median.
+        review_spans = [
+            span
+            for pr in merged_prs
+            if pr["number"] in first_review
+            if (span := hours_between(first_review[pr["number"]], pr["merged_at"])) >= 0
+        ]
         return {
             "merged": len(merged_prs),
             "review_sample": len(review_spans),
@@ -144,9 +148,7 @@ def compute(con, repo_id, weeks, now):
             ),
             "time_to_first_review_h": median(
                 [
-                    hours_between(
-                        pr["created_at"], first_review_at(reviews.get(pr["number"], []))
-                    )
+                    hours_between(pr["created_at"], first_review[pr["number"]])
                     for pr in reviewed_prs
                 ]
             ),
@@ -163,6 +165,22 @@ def compute(con, repo_id, weeks, now):
     return {"weeks": weekly, "summary": summary}
 
 
+def _links_folder(text, folder, all_folders):
+    """True when text names this folder rather than a longer sibling folder.
+
+    Branch names may extend the folder name (001-alpha-build), so a plain
+    substring match stands — except where the match is actually a longer
+    known work-item folder (003-metrics must not claim 003-metrics-tool).
+    """
+    longer = [f for f in all_folders if f != folder and f.startswith(folder)]
+    index = text.find(folder)
+    while index != -1:
+        if not any(text.startswith(f, index) for f in longer):
+            return True
+        index = text.find(folder, index + 1)
+    return False
+
+
 def compute_chain(con, repo_id):
     """Per-work-item stage timings and out-of-order edit flags."""
     artifacts = {}
@@ -172,17 +190,24 @@ def compute_chain(con, repo_id):
         (repo_id,),
     ):
         artifacts.setdefault(row["folder"], {})[row["artifact"]] = row
-    merged_prs = con.execute(
-        "SELECT number, head_ref, title, body, merged_at FROM pull_requests "
-        "WHERE repo_id = ? AND merged_at IS NOT NULL",
-        (repo_id,),
-    ).fetchall()
+    merged_prs = [
+        (row, f"{row['head_ref'] or ''}\n{row['title'] or ''}\n{row['body'] or ''}")
+        for row in con.execute(
+            "SELECT number, head_ref, title, body, merged_at FROM pull_requests "
+            "WHERE repo_id = ? AND merged_at IS NOT NULL",
+            (repo_id,),
+        )
+    ]
 
+    folders = [
+        row["folder"]
+        for row in con.execute(
+            "SELECT folder FROM work_items WHERE repo_id = ? ORDER BY folder",
+            (repo_id,),
+        )
+    ]
     items = []
-    for row in con.execute(
-        "SELECT folder FROM work_items WHERE repo_id = ? ORDER BY folder", (repo_id,)
-    ):
-        folder = row["folder"]
+    for folder in folders:
         stages = artifacts.get(folder, {})
         intent, spec, plan = (stages.get(a) for a in ("intent", "spec", "plan"))
 
@@ -192,11 +217,7 @@ def compute_chain(con, repo_id):
             return None
 
         linked = [
-            pr
-            for pr in merged_prs
-            if folder in (pr["head_ref"] or "")
-            or folder in (pr["title"] or "")
-            or folder in (pr["body"] or "")
+            pr for pr, text in merged_prs if _links_folder(text, folder, folders)
         ]
         merge_at = min((pr["merged_at"] for pr in linked), default=None)
 

@@ -49,14 +49,15 @@ def test_paginate_follows_next_links_verbatim(transport):
     assert list(client.paginate("/repos/a/b/things")) == ["one", "two", "three"]
 
 
-def test_paginate_unwraps_workflow_runs(transport):
+def test_paginate_unwraps_named_envelope(transport):
     transport.add(
         "/repos/a/b/actions/runs",
         {"per_page": 100},
         body={"total_count": 1, "workflow_runs": [{"id": 7}]},
     )
     client = Client(transport=transport)
-    assert list(client.paginate("/repos/a/b/actions/runs")) == [{"id": 7}]
+    runs = client.paginate("/repos/a/b/actions/runs", items_key="workflow_runs")
+    assert list(runs) == [{"id": 7}]
 
 
 def test_first_and_last_of_uses_last_page(transport):

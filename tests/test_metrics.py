@@ -2,6 +2,8 @@
 
 from datetime import datetime, timezone
 
+from conftest import pr_payload
+
 from suomotu_metrics import db, metrics
 
 NOW = datetime(2026, 9, 2, 12, 0, tzinfo=timezone.utc)  # Wednesday, 2026-W36
@@ -12,19 +14,16 @@ def seed_repo(con):
 
 
 def insert_pr(con, number, created, merged=None, sha=None, draft=False, head="feature"):
-    con.execute(
-        "INSERT INTO pull_requests (repo_id, number, head_ref, draft, state, "
-        "created_at, updated_at, merged_at, merge_commit_sha) "
-        "VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (
+    db.upsert_pull_request(
+        con,
+        1,
+        pr_payload(
             number,
-            head,
-            1 if draft else 0,
-            "closed" if merged else "open",
             created,
-            created,
-            merged,
-            sha,
+            merged_at=merged,
+            merge_commit_sha=sha,
+            draft=draft,
+            head_ref=head,
         ),
     )
 
@@ -117,12 +116,41 @@ def test_merges_outside_window_excluded(con):
 
 
 def test_first_pass_rules():
-    approved = [{"state": "APPROVED", "submitted_at": "2026-08-04T10:00:00Z"}]
-    changes = [{"state": "CHANGES_REQUESTED", "submitted_at": "2026-08-04T10:00:00Z"}]
-    assert metrics.is_first_pass({}, [], []) is True  # no reviews at all
-    assert metrics.is_first_pass({}, approved, ["2026-08-03T00:00:00Z"]) is True
-    assert metrics.is_first_pass({}, approved, ["2026-08-05T00:00:00Z"]) is False
-    assert metrics.is_first_pass({}, changes, []) is False
+    first = "2026-08-04T10:00:00Z"
+    approved = [{"state": "APPROVED", "submitted_at": first}]
+    changes = [{"state": "CHANGES_REQUESTED", "submitted_at": first}]
+    assert metrics.is_first_pass([], [], None) is True  # no reviews at all
+    assert metrics.is_first_pass(approved, ["2026-08-03T00:00:00Z"], first) is True
+    assert metrics.is_first_pass(approved, ["2026-08-05T00:00:00Z"], first) is False
+    assert metrics.is_first_pass(changes, [], first) is False
+
+
+def test_post_merge_review_stays_out_of_review_time(con):
+    """An approval left after the merge is not a review phase."""
+    seed_repo(con)
+    insert_pr(con, 1, "2026-08-11T00:00:00Z", "2026-08-12T00:00:00Z", "m1")
+    insert_review(con, 1, 11, "APPROVED", "2026-08-13T06:00:00Z")  # after merge
+    summary = metrics.compute(con, 1, 12, NOW)["summary"]
+    assert summary["review_time_h"] is None
+    assert summary["review_sample"] == 0
+
+
+def test_linkage_requires_folder_boundaries(con):
+    """A folder name that is a prefix of another folder links no wrong PRs."""
+    seed_repo(con)
+    db.upsert_work_item(con, 1, "003-metrics")
+    db.upsert_work_item(con, 1, "003-metrics-tool")
+    db.upsert_artifact_commits(
+        con, 1, "003-metrics", "plan", "2026-08-01T00:00:00Z", "2026-08-01T00:00:00Z"
+    )
+    insert_pr(
+        con, 7, "2026-08-02T00:00:00Z", "2026-08-03T00:00:00Z", "m7",
+        head="003-metrics-tool",
+    )
+    items = {item["folder"]: item for item in metrics.compute_chain(con, 1)}
+    assert items["003-metrics"]["linked_prs"] == []
+    assert items["003-metrics"]["plan_to_merge_h"] is None
+    assert items["003-metrics-tool"]["linked_prs"] == [7]
 
 
 def test_failure_needs_default_branch(con):

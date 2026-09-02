@@ -6,6 +6,7 @@ point release with history intact.
 """
 
 import sqlite3
+from pathlib import Path
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS repos (
@@ -75,6 +76,8 @@ CREATE TABLE IF NOT EXISTS sync_state (
 
 
 def connect(path):
+    if path != ":memory:":
+        Path(path).expanduser().parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(path)
     con.row_factory = sqlite3.Row
     con.executescript(SCHEMA)
@@ -92,12 +95,18 @@ def upsert_repo(con, repo):
 
 
 def upsert_pull_request(con, repo_id, pr):
+    # ON CONFLICT updates only the GitHub-sourced columns, so locally derived
+    # columns (reverted_at) survive re-collection by construction.
     con.execute(
-        "INSERT OR REPLACE INTO pull_requests "
+        "INSERT INTO pull_requests "
         "(repo_id, number, title, body, head_ref, draft, state, created_at, "
-        " updated_at, merged_at, merge_commit_sha, reverted_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-        " (SELECT reverted_at FROM pull_requests WHERE repo_id=? AND number=?))",
+        " updated_at, merged_at, merge_commit_sha) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(repo_id, number) DO UPDATE SET "
+        "title=excluded.title, body=excluded.body, head_ref=excluded.head_ref, "
+        "draft=excluded.draft, state=excluded.state, "
+        "created_at=excluded.created_at, updated_at=excluded.updated_at, "
+        "merged_at=excluded.merged_at, merge_commit_sha=excluded.merge_commit_sha",
         (
             repo_id,
             pr["number"],
@@ -110,8 +119,6 @@ def upsert_pull_request(con, repo_id, pr):
             pr["updated_at"],
             pr.get("merged_at"),
             pr.get("merge_commit_sha"),
-            repo_id,
-            pr["number"],
         ),
     )
 
@@ -149,12 +156,31 @@ def upsert_ci_run(con, repo_id, run):
 
 
 def mark_reverted(con, repo_id, merge_commit_sha, reverted_at):
+    """Prefix match, so abbreviated SHAs in revert messages still land."""
     cur = con.execute(
         "UPDATE pull_requests SET reverted_at = ? "
-        "WHERE repo_id = ? AND merge_commit_sha = ? AND reverted_at IS NULL",
+        "WHERE repo_id = ? AND merge_commit_sha LIKE ? || '%' "
+        "AND reverted_at IS NULL",
         (reverted_at, repo_id, merge_commit_sha),
     )
     return cur.rowcount
+
+
+def mark_reverted_by_number(con, repo_id, pr_number, reverted_at):
+    cur = con.execute(
+        "UPDATE pull_requests SET reverted_at = ? "
+        "WHERE repo_id = ? AND number = ? AND merged_at IS NOT NULL "
+        "AND reverted_at IS NULL",
+        (reverted_at, repo_id, pr_number),
+    )
+    return cur.rowcount
+
+
+def get_repo_id(con, full_name):
+    row = con.execute(
+        "SELECT id FROM repos WHERE full_name = ?", (full_name,)
+    ).fetchone()
+    return row["id"] if row else None
 
 
 def upsert_work_item(con, repo_id, folder):

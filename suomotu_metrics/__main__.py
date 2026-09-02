@@ -6,10 +6,11 @@ produced, non-zero with a one-line diagnostic on failure.
 
 import argparse
 import os
+import sqlite3
 import sys
 from datetime import datetime, timezone
 
-from . import collect, db, report
+from . import collect, db, metrics, report
 from .github import Client, GitHubError
 
 SUBCOMMANDS = ("run", "collect", "report")
@@ -30,7 +31,9 @@ def build_parser():
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
-    if argv and argv[0] not in SUBCOMMANDS and not argv[0].startswith("-"):
+    # Default subcommand: owner/repo arguments contain "/", so a bare token
+    # equal to a subcommand name is unambiguous.
+    if argv and not any(token in SUBCOMMANDS for token in argv):
         argv.insert(0, "run")
     args = build_parser().parse_args(argv)
 
@@ -46,24 +49,31 @@ def main(argv=None):
         client = Client(token)
 
     now = datetime.now(timezone.utc)
-    con = db.connect(args.db)
+    try:
+        con = db.connect(args.db)
+    except (sqlite3.OperationalError, OSError) as error:
+        print(
+            f"suomotu-metrics: cannot open database at {args.db} ({error}) — "
+            "pass a writable path with --db",
+            file=sys.stderr,
+        )
+        return 1
+    cutoff = metrics.window_start(now, args.weeks).strftime("%Y-%m-%dT%H:%M:%SZ")
     try:
         for full_name in args.repos:
             if full_name.count("/") != 1:
                 print(f"suomotu-metrics: '{full_name}' is not owner/repo", file=sys.stderr)
                 return 2
             if args.command in ("run", "collect"):
-                summary = collect.collect_repo(con, client, full_name)
+                summary = collect.collect_repo(con, client, full_name, cutoff)
                 print(
                     f"collected {full_name}: {summary['new_prs']} PRs updated, "
                     f"{summary['new_runs']} CI runs, {summary['new_reverts']} reverts, "
                     f"{summary['work_items']} chain work items"
                 )
             if args.command in ("run", "report"):
-                row = con.execute(
-                    "SELECT id FROM repos WHERE full_name = ?", (full_name,)
-                ).fetchone()
-                if row is None:
+                repo_id = db.get_repo_id(con, full_name)
+                if repo_id is None:
                     print(
                         f"suomotu-metrics: no collected data for {full_name} — "
                         "run collect first",
@@ -71,7 +81,7 @@ def main(argv=None):
                     )
                     return 2
                 path = report.write_report(
-                    con, row["id"], full_name, args.weeks, now, args.out
+                    con, repo_id, full_name, args.weeks, now, args.out
                 )
                 print(f"report: {path}")
     except GitHubError as error:

@@ -53,3 +53,19 @@ def test_default_subcommand_is_run(monkeypatch, capsys):
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     # With no token, the injected default "run" hits the token check first.
     assert main(["acme/rocket"]) == 2
+
+
+def test_default_subcommand_with_leading_flag(monkeypatch, capsys):
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    # A flag before the repo still gets the default subcommand injected:
+    # reaching the token check (exit 2) proves argparse accepted the line.
+    assert main(["--weeks", "4", "acme/rocket"]) == 2
+    assert "GITHUB_TOKEN" in capsys.readouterr().err
+
+
+def test_unwritable_db_path_gives_one_line_diagnostic(monkeypatch, capsys):
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    code = main(["report", "acme/rocket", "--db", "/proc/nope/metrics.db"])
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "cannot open database" in err and "--db" in err

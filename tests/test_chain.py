@@ -58,3 +58,22 @@ def test_detects_work_items_and_timestamps(con, transport):
         ("spec", "2026-08-02T00:00:00Z"),
     ]
     assert rows[1]["last_commit_at"] == "2026-08-03T00:00:00Z"
+    assert db.get_state(con, 1, "chain_watermark") == "2026-08-03T00:00:00Z"
+
+
+def test_quiet_chain_probe_skips_artifact_fetches(con, transport):
+    """With a watermark and no new commits under work/, one probe suffices."""
+    seed_repo(con)
+    db.upsert_work_item(con, 1, "001-alpha")
+    db.set_state(con, 1, "chain_watermark", "2026-08-03T00:00:00Z")
+    transport.add(
+        "/repos/acme/rocket/commits",
+        {"path": "work", "since": "2026-08-03T00:00:00Z", "per_page": 1},
+        body=[],
+    )
+    count = chain.collect_chain(con, Client(transport=transport), 1, "acme/rocket")
+    assert count == 1
+    assert transport.calls == [
+        ("/repos/acme/rocket/commits",
+         {"path": "work", "since": "2026-08-03T00:00:00Z", "per_page": "1"}),
+    ]

@@ -58,6 +58,7 @@ def test_duration_formatting():
     assert report.format_hours(0.5) == "30m"
     assert report.format_hours(24.0) == "24.0h"
     assert report.format_hours(72.0) == "3.0d"
+    assert report.format_hours(-30.0) == "-30.0h"  # out-of-order chain span
     assert report.format_share(0.6667) == "67%"
     assert report.format_share(None) == "—"
 
