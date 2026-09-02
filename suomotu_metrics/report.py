@@ -82,7 +82,7 @@ def render(con, repo_id, full_name, weeks, now):
         f"{format_hours(summary['time_to_first_review_h'])} "
         f"| {summary['reviewed']} reviewed PRs |",
         f"| Review time per PR (median) | {format_hours(summary['review_time_h'])} "
-        f"| {summary['merged']} merged PRs |",
+        f"| {summary['review_sample']} merged PRs with a review |",
         f"| Change failure rate | {format_share(summary['change_failure_rate'])} "
         f"| {summary['merged']} merged PRs |",
         "",

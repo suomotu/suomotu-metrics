@@ -137,6 +137,7 @@ def compute(con, repo_id, weeks, now):
                 review_spans.append(hours_between(first, pr["merged_at"]))
         return {
             "merged": len(merged_prs),
+            "review_sample": len(review_spans),
             "first_pass_share": (sum(first_pass) / len(first_pass)) if first_pass else None,
             "lead_time_h": median(
                 [hours_between(pr["created_at"], pr["merged_at"]) for pr in merged_prs]

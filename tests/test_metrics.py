@@ -88,6 +88,7 @@ def test_summary_hand_computed(con):
     assert summary["lead_time_h"] == 24.0  # median of 48, 12, 24, 24
     assert summary["change_failure_rate"] == 0.5  # PR3 (CI), PR4 (revert)
     assert summary["review_time_h"] == 18.0  # median of 24, 10, 18
+    assert summary["review_sample"] == 3  # PR1, PR2, PR4 — PR3 merged unreviewed
     assert summary["time_to_first_review_h"] == 5.0  # median of 24, 2, 6, 4
     assert summary["reviewed"] == 4  # PR1, PR2, PR4, PR6 — draft PR5 excluded
 
