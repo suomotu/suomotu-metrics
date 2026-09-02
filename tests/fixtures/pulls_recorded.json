@@ -1,0 +1,16 @@
+[
+  {
+    "number": 14325,
+    "title": "recorded pull request (sanitized)",
+    "body": "recorded from the live API on 2026-09-02; text fields sanitized",
+    "draft": false,
+    "state": "closed",
+    "created_at": "2026-09-02T17:19:00Z",
+    "updated_at": "2026-09-02T17:23:12Z",
+    "merged_at": null,
+    "merge_commit_sha": "d5a3bc7ed531f125aa9f64105c61b250d0d3ac9e",
+    "head": {
+      "ref": "fix/14064-ssh-key-delete-signing"
+    }
+  }
+]

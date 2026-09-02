@@ -1,0 +1,14 @@
+{
+  "total_count": 1,
+  "workflow_runs": [
+    {
+      "id": 33662751954,
+      "head_sha": "a82d1e998dc0369a16975a074e2eecdd272cc026",
+      "head_branch": "trunk",
+      "conclusion": "success",
+      "status": "completed",
+      "event": "schedule",
+      "created_at": "2026-09-02T17:42:40Z"
+    }
+  ]
+}

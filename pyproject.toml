@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "suomotu-metrics"
+description = "Weekly engineering metrics from the GitHub history a repo already has."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+dynamic = ["version"]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+suomotu-metrics = "suomotu_metrics.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/suomotu/suomotu-metrics"
+
+[tool.setuptools]
+packages = ["suomotu_metrics"]
+
+[tool.setuptools.dynamic]
+version = { attr = "suomotu_metrics.__version__" }
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
